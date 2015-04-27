@@ -97,11 +97,11 @@ connect(Opts) ->
 
 
 connect(Addr, Port, ConnectOpts, ConnectTime, false) ->
-  gen_tcp:connect(Addr, Port, ConnectOpts, ConnectTime);
+    gen_tcp:connect(Addr, Port, ConnectOpts, ConnectTime);
 
 
 connect(Addr, Port, ConnectOpts, ConnectTime, true) ->
-  ssl:connect(Addr, Port, ConnectOpts, ConnectTime).
+    ssl:connect(Addr, Port, ConnectOpts, ConnectTime).
 
 
 listen(Opts) ->
@@ -109,7 +109,7 @@ listen(Opts) ->
         undefined ->
             Addr = proplists:get_value(addr, Opts, default_addr()),
             Port = proplists:get_value(port, Opts, ?DEFAULT_SMPP_PORT),
-            gen_tcp:listen(Port, ?LISTEN_OPTS(Addr));
+            listen(Port, ?LISTEN_OPTS(Addr), Opts);
         LSock ->
             Addr = proplists:get_value(addr, Opts, default_addr()),
             case inet:setopts(LSock, ?LISTEN_OPTS(Addr)) of
@@ -119,6 +119,33 @@ listen(Opts) ->
                     Error
             end
     end.
+
+
+listen(Port, LOpts, Opts) ->
+
+    CertFile = proplists:get_value(certfile, Opts),
+    KeyFile = proplists:get_value(keyfile, Opts),
+
+    IsCertFile = filelib:is_regular(CertFile),
+    IsKeyFile =  filelib:is_regular(KeyFile),
+
+    case IsCertFile andalso IsKeyFile of
+        true -> listen_ssl(Port, LOpts, Opts, CertFile, KeyFile);
+        false -> gen_tcp:listen(Port, LOpts)
+    end.
+
+
+listen_ssl(Port, LOpts0, Opts, CertFile, KeyFile) ->
+    CACertFile = proplists:get_value(cacertfile, Opts),
+    SSLCertOpts0 =
+        [{certfile, CertFile},
+        {keyfile, KeyFile}],
+    LOpts =
+    case CACertFile of
+        undefined -> SSLCertOpts0 ++ LOpts0;
+        CACertFile -> [{cacertfile, CACertFile} | SSLCertOpts0] ++ LOpts0
+    end,
+    ssl:listen(Port, LOpts).
 
 
 tcp_send(Sock, Data) when is_port(Sock) ->
@@ -153,35 +180,52 @@ send_pdu(Sock, Pdu, Log) ->
 
 
 controlling_process(Sock, Pid) when is_port(Sock) ->
-  gen_tcp:controlling_process(Sock, Pid);
+    gen_tcp:controlling_process(Sock, Pid);
 
 
 controlling_process(SSLSock, Pid) ->
-  ssl:controlling_process(SSLSock, Pid).
+    ssl:controlling_process(SSLSock, Pid).
 
 
 close(Sock) when is_port(Sock) ->
-  gen_tcp:close(Sock);
+    gen_tcp:close(Sock);
 
 
 close(SSLSock) ->
-  ssl:close(SSLSock).
+    ssl:close(SSLSock).
 
 %%%-----------------------------------------------------------------------------
 %%% SOCKET LISTENER FUNCTIONS
 %%%-----------------------------------------------------------------------------
-wait_accept(Pid, LSock, Log) ->
+wait_accept(Pid, LSock, Log) when is_port(LSock) ->
     case gen_tcp:accept(LSock) of
         {ok, Sock} ->
-            case handle_accept(Pid, Sock) of
-                true ->
-                    ?MODULE:recv_loop(Pid, Sock, <<>>, Log);
-                false ->
-                    gen_tcp:close(Sock),
-                    ?MODULE:wait_accept(Pid, LSock, Log)
+            handle_accept(Pid, LSock, Log, Sock);
+        {error, Reason} ->
+            gen_fsm:send_all_state_event(Pid, {listen_error, Reason})
+    end;
+
+
+wait_accept(Pid, LSock, Log) ->
+    case ssl:transport_accept(LSock) of
+        {ok, Sock} ->
+            case ssl:ssl_accept(Sock) of
+                ok -> handle_accept(Pid, LSock, Log, Sock);
+                {error, Reason} ->
+                    gen_fsm:send_all_state_event(Pid, {handshake_error, Reason})
             end;
         {error, Reason} ->
             gen_fsm:send_all_state_event(Pid, {listen_error, Reason})
+    end.
+
+
+handle_accept(Pid, LSock, Log, Sock) ->
+    case handle_accept(Pid, Sock) of
+        true ->
+            ?MODULE:recv_loop(Pid, Sock, <<>>, Log);
+        false ->
+            close(Sock),
+            ?MODULE:wait_accept(Pid, LSock, Log)
     end.
 
 
@@ -211,11 +255,11 @@ recv_loop(Pid, Sock, Buffer, Log) ->
 
 
 setopts(Sock, Opts) when is_port(Sock) ->
-  inet:setopts(Sock, Opts);
+    inet:setopts(Sock, Opts);
 
 
 setopts(Sock, Opts) ->
-  ssl:setopts(Sock, Opts).
+    ssl:setopts(Sock, Opts).
 
 %%%-----------------------------------------------------------------------------
 %%% TIMER FUNCTIONS
@@ -256,8 +300,17 @@ default_addr() ->
     Addr.
 
 
-handle_accept(Pid, Sock) ->
+handle_accept(Pid, Sock) when is_port(Sock) ->
     case inet:peername(Sock) of
+        {ok, {Addr, _Port}} ->
+            gen_fsm:sync_send_event(Pid, {accept, Sock, Addr});
+        {error, _Reason} ->  % Most probably the socket is closed
+            false
+    end;
+
+
+handle_accept(Pid, Sock) ->
+    case ssl:peername(Sock) of
         {ok, {Addr, _Port}} ->
             gen_fsm:sync_send_event(Pid, {accept, Sock, Addr});
         {error, _Reason} ->  % Most probably the socket is closed
