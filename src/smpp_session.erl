@@ -124,27 +124,34 @@ listen(Opts) ->
 listen(Port, LOpts, Opts) ->
 
     CertFile = proplists:get_value(certfile, Opts),
-    KeyFile = proplists:get_value(keyfile, Opts),
 
-    IsCertFile = filelib:is_regular(CertFile),
-    IsKeyFile =  filelib:is_regular(KeyFile),
-
-    case IsCertFile andalso IsKeyFile of
-        true -> listen_ssl(Port, LOpts, Opts, CertFile, KeyFile);
-        false -> gen_tcp:listen(Port, LOpts)
+    case CertFile of
+        undefined -> gen_tcp:listen(Port, LOpts);
+        _ -> listen_ssl(Port, LOpts, Opts)
     end.
 
 
-listen_ssl(Port, LOpts0, Opts, CertFile, KeyFile) ->
-    CACertFile = proplists:get_value(cacertfile, Opts),
-    SSLCertOpts0 =
+listen_ssl(Port, LOpts0, Opts) ->
+    CertFile = proplists:get_value(certfile, Opts),
+    KeyFile = proplists:get_value(keyfile, Opts),
+    LOpts1 =
         [{certfile, CertFile},
-        {keyfile, KeyFile}],
-    LOpts =
+        {keyfile, KeyFile} | LOpts0],
+
+    CACertFile = proplists:get_value(cacertfile, Opts),
+    LOpts2 =
     case CACertFile of
-        undefined -> SSLCertOpts0 ++ LOpts0;
-        CACertFile -> [{cacertfile, CACertFile} | SSLCertOpts0] ++ LOpts0
+        undefined -> LOpts1;
+        _ -> [{cacertfile, CACertFile} | LOpts1]
     end,
+
+    Versions = proplists:get_value(versions, Opts),
+    LOpts =
+    case Versions of
+        undefined -> LOpts2;
+        _ -> [{versions, Versions} | LOpts2]
+    end,
+
     ssl:listen(Port, LOpts).
 
 
