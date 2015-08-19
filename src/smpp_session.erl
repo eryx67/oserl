@@ -32,7 +32,7 @@
 -include_lib("oserl/include/oserl.hrl").
 
 %%% EXTERNAL EXPORTS
--export([congestion/3, connect/1, listen/1, tcp_send/2, send_pdu/3]).
+-export([congestion/3, connect/1, listen/1, tcp_send/2, send_pdu/3, controlling_process/2, close/1]).
 
 %%% SOCKET LISTENER FUNCTIONS EXPORTS
 -export([wait_accept/3, wait_recv/3, recv_loop/4]).
@@ -82,11 +82,12 @@ congestion(CongestionSt, WaitTime, Timestamp) ->
 
 connect(Opts) ->
     Ip = proplists:get_value(ip, Opts),
+    UseSSL = proplists:get_value(ssl, Opts, false),
     case proplists:get_value(sock, Opts, undefined) of
         undefined ->
             Addr = proplists:get_value(addr, Opts),
             Port = proplists:get_value(port, Opts, ?DEFAULT_SMPP_PORT),
-            gen_tcp:connect(Addr, Port, ?CONNECT_OPTS(Ip), ?CONNECT_TIME);
+            connect(Addr, Port, ?CONNECT_OPTS(Ip), ?CONNECT_TIME, UseSSL);
         Sock ->
             case inet:setopts(Sock, ?CONNECT_OPTS(Ip)) of
                 ok    -> {ok, Sock};
@@ -95,12 +96,20 @@ connect(Opts) ->
     end.
 
 
+connect(Addr, Port, ConnectOpts, ConnectTime, false) ->
+    gen_tcp:connect(Addr, Port, ConnectOpts, ConnectTime);
+
+
+connect(Addr, Port, ConnectOpts, ConnectTime, true) ->
+    ssl:connect(Addr, Port, ConnectOpts, ConnectTime).
+
+
 listen(Opts) ->
     case proplists:get_value(lsock, Opts, undefined) of
         undefined ->
             Addr = proplists:get_value(addr, Opts, default_addr()),
             Port = proplists:get_value(port, Opts, ?DEFAULT_SMPP_PORT),
-            gen_tcp:listen(Port, ?LISTEN_OPTS(Addr));
+            listen(Port, ?LISTEN_OPTS(Addr), Opts);
         LSock ->
             Addr = proplists:get_value(addr, Opts, default_addr()),
             case inet:setopts(LSock, ?LISTEN_OPTS(Addr)) of
@@ -112,12 +121,50 @@ listen(Opts) ->
     end.
 
 
+listen(Port, LOpts, Opts) ->
+
+    CertFile = proplists:get_value(certfile, Opts),
+
+    case CertFile of
+        undefined -> gen_tcp:listen(Port, LOpts);
+        _ -> listen_ssl(Port, LOpts, Opts)
+    end.
+
+
+listen_ssl(Port, LOpts0, Opts) ->
+    CertFile = proplists:get_value(certfile, Opts),
+    KeyFile = proplists:get_value(keyfile, Opts),
+    LOpts1 =
+        [{certfile, CertFile},
+        {keyfile, KeyFile} | LOpts0],
+
+    CACertFile = proplists:get_value(cacertfile, Opts),
+    LOpts2 =
+    case CACertFile of
+        undefined -> LOpts1;
+        _ -> [{cacertfile, CACertFile} | LOpts1]
+    end,
+
+    Versions = proplists:get_value(versions, Opts),
+    LOpts =
+    case Versions of
+        undefined -> LOpts2;
+        _ -> [{versions, Versions} | LOpts2]
+    end,
+
+    ssl:listen(Port, LOpts).
+
+
 tcp_send(Sock, Data) when is_port(Sock) ->
     try erlang:port_command(Sock, Data) of
         true -> ok
     catch
         error:_Error -> {error, einval}
-    end.
+    end;
+
+
+tcp_send(Sock, Data) ->
+    ssl:send(Sock, Data).
 
 
 send_pdu(Sock, BinPdu, Log) when is_list(BinPdu) ->
@@ -134,25 +181,58 @@ send_pdu(Sock, Pdu, Log) ->
         {ok, BinPdu} ->
             send_pdu(Sock, BinPdu, Log);
         {error, _CmdId, Status, _SeqNum} ->
-            gen_tcp:close(Sock),
+            close(Sock),
             exit({command_status, Status})
     end.
+
+
+controlling_process(Sock, Pid) when is_port(Sock) ->
+    gen_tcp:controlling_process(Sock, Pid);
+
+
+controlling_process(SSLSock, Pid) ->
+    ssl:controlling_process(SSLSock, Pid).
+
+
+close(Sock) when is_port(Sock) ->
+    gen_tcp:close(Sock);
+
+
+close(SSLSock) ->
+    ssl:close(SSLSock).
 
 %%%-----------------------------------------------------------------------------
 %%% SOCKET LISTENER FUNCTIONS
 %%%-----------------------------------------------------------------------------
-wait_accept(Pid, LSock, Log) ->
+wait_accept(Pid, LSock, Log) when is_port(LSock) ->
     case gen_tcp:accept(LSock) of
         {ok, Sock} ->
-            case handle_accept(Pid, Sock) of
-                true ->
-                    ?MODULE:recv_loop(Pid, Sock, <<>>, Log);
-                false ->
-                    gen_tcp:close(Sock),
-                    ?MODULE:wait_accept(Pid, LSock, Log)
+            handle_accept(Pid, LSock, Log, Sock);
+        {error, Reason} ->
+            gen_fsm:send_all_state_event(Pid, {listen_error, Reason})
+    end;
+
+
+wait_accept(Pid, LSock, Log) ->
+    case ssl:transport_accept(LSock) of
+        {ok, Sock} ->
+            case ssl:ssl_accept(Sock) of
+                ok -> handle_accept(Pid, LSock, Log, Sock);
+                {error, Reason} ->
+                    gen_fsm:send_all_state_event(Pid, {handshake_error, Reason})
             end;
         {error, Reason} ->
             gen_fsm:send_all_state_event(Pid, {listen_error, Reason})
+    end.
+
+
+handle_accept(Pid, LSock, Log, Sock) ->
+    case handle_accept(Pid, Sock) of
+        true ->
+            ?MODULE:recv_loop(Pid, Sock, <<>>, Log);
+        false ->
+            close(Sock),
+            ?MODULE:wait_accept(Pid, LSock, Log)
     end.
 
 
@@ -162,17 +242,31 @@ wait_recv(Pid, Sock, Log) ->
 
 recv_loop(Pid, Sock, Buffer, Log) ->
     Timestamp = now(),
-    inet:setopts(Sock, [{active, once}]),
+    setopts(Sock, [{active, once}]),
     receive
-        {tcp, Sock, Input} ->
+        {Transport, Sock, Input} when
+              Transport =:= tcp orelse
+              Transport =:= ssl ->
             L = timer:now_diff(now(), Timestamp),
             B = handle_input(Pid, list_to_binary([Buffer, Input]), L, 1, Log),
             ?MODULE:recv_loop(Pid, Sock, B, Log);
-        {tcp_closed, Sock} ->
+        {TransportClosed, Sock} when
+              TransportClosed =:= tcp_closed orelse
+              TransportClosed =:= ssl_closed ->
             gen_fsm:send_all_state_event(Pid, {sock_error, closed});
-        {tcp_error, Sock, Reason} ->
+        {TransportError, Sock, Reason} when
+              TransportError =:= tcp_error orelse
+              TransportError =:= ssl_error ->
             gen_fsm:send_all_state_event(Pid, {sock_error, Reason})
     end.
+
+
+setopts(Sock, Opts) when is_port(Sock) ->
+    inet:setopts(Sock, Opts);
+
+
+setopts(Sock, Opts) ->
+    ssl:setopts(Sock, Opts).
 
 %%%-----------------------------------------------------------------------------
 %%% TIMER FUNCTIONS
@@ -213,8 +307,17 @@ default_addr() ->
     Addr.
 
 
-handle_accept(Pid, Sock) ->
+handle_accept(Pid, Sock) when is_port(Sock) ->
     case inet:peername(Sock) of
+        {ok, {Addr, _Port}} ->
+            gen_fsm:sync_send_event(Pid, {accept, Sock, Addr});
+        {error, _Reason} ->  % Most probably the socket is closed
+            false
+    end;
+
+
+handle_accept(Pid, Sock) ->
+    case ssl:peername(Sock) of
         {ok, {Addr, _Port}} ->
             gen_fsm:sync_send_event(Pid, {accept, Sock, Addr});
         {error, _Reason} ->  % Most probably the socket is closed
