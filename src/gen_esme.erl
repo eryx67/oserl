@@ -110,7 +110,7 @@
 -export([code_change/3]).
 
 %%% INTERNAL GEN_ESME_SESSION EXPORTS
--export([handle_accept/2,
+-export([handle_accept/3,
          handle_alert_notification/2,
          handle_closed/2,
          handle_enquire_link/2,
@@ -571,7 +571,7 @@ code_change(OldVsn, St, Extra) ->
 %%%-----------------------------------------------------------------------------
 %%% INTERNAL GEN_ESME_SESSION EXPORTS
 %%%-----------------------------------------------------------------------------
-handle_accept(SrvRef, Addr) ->
+handle_accept(SrvRef, Addr, _Port) ->
     gen_server:call(SrvRef, {handle_accept, Addr}, ?ASSERT_TIME).
 
 

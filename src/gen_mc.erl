@@ -80,7 +80,7 @@
 -export([code_change/3]).
 
 %%% INTERNAL GEN_MC_SESSION EXPORTS
--export([handle_accept/2,
+-export([handle_accept/3,
          handle_bind/2,
          handle_closed/2,
          handle_enquire_link/2,
@@ -435,7 +435,7 @@ code_change(OldVsn, St, Extra) ->
 %%%-----------------------------------------------------------------------------
 %%% INTERNAL GEN_MC_SESSION EXPORTS
 %%%-----------------------------------------------------------------------------
-handle_accept(SrvRef, Addr) ->
+handle_accept(SrvRef, Addr, _Port) ->
     Self = self(),
     case gen_server:call(SrvRef, {{handle_accept, Addr}, Self}, ?ASSERT_TIME) of
         {ok, Opts} ->
