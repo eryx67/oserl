@@ -195,7 +195,7 @@ controlling_process(SSLSock, Pid) ->
 
 
 close(Sock) when is_port(Sock) ->
-    gen_tcp:close(Sock);
+    catch(gen_tcp:close(Sock));
 
 
 close(SSLSock) ->
