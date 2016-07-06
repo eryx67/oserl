@@ -70,5 +70,7 @@ swap_handler(Pid, HandlerArgs1, HandlerArgs2) ->
 %%%-----------------------------------------------------------------------------
 pdu(Pid, {Direction, IoList}) when is_list(IoList) ->
     pdu(Pid, {Direction, list_to_binary(IoList)});
+pdu(LogFun, {Direction, Pdu}) when is_binary(Pdu) andalso is_function(LogFun) ->
+    LogFun({pdu, Direction, Pdu});
 pdu(Pid, {Direction, Pdu}) when is_binary(Pdu) ->
     gen_event:notify(Pid, {pdu, Direction, Pdu}).
