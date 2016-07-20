@@ -134,4 +134,10 @@
          inactivity_time   = ?INACTIVITY_TIME,
          response_time     = ?RESPONSE_TIME}).
 
+-ifdef(USE_NOW).
+-define(NOW, erlang:now()).
+-else.
+-define(NOW, erlang:timestamp()).
+-endif.
+
 -endif.  % -ifndef(oserl)
