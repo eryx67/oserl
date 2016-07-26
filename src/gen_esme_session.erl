@@ -87,6 +87,7 @@
          session_init_timer,
          enquire_link_timer,
          inactivity_timer,
+         smsc_inactivity_timer,
          enquire_link_resp_timer}).
 
 %%%-----------------------------------------------------------------------------
@@ -397,10 +398,14 @@ esme_rinvbndsts_resp({CmdId, Pdu}, Sock, Log) ->
 %%%-----------------------------------------------------------------------------
 handle_event({input, CmdId, _Pdu, _Lapse, _Timestamp}, Stn, Std)
   when CmdId == ?COMMAND_ID_ENQUIRE_LINK_RESP ->
+    smpp_session:cancel_timer(Std#st.smsc_inactivity_timer),
+    T = smpp_session:start_timer(Std#st.timers, smsc_inactivity_timer),
     smpp_session:cancel_timer(Std#st.enquire_link_resp_timer),
-    {next_state, Stn, Std};
+    {next_state, Stn, Std#st{smsc_inactivity_timer = T}};
 handle_event({input, CmdId, Pdu, _Lapse, _Timestamp}, Stn, Std)
   when CmdId == ?COMMAND_ID_GENERIC_NACK ->
+    smpp_session:cancel_timer(Std#st.smsc_inactivity_timer),
+    T = smpp_session:start_timer(Std#st.timers, smsc_inactivity_timer),
     smpp_session:cancel_timer(Std#st.enquire_link_resp_timer),  % In case it was set
     SeqNum = smpp_operation:get_value(sequence_number, Pdu),
     case smpp_req_tab:read(Std#st.req_tab, SeqNum) of
@@ -417,9 +422,12 @@ handle_event({input, CmdId, Pdu, _Lapse, _Timestamp}, Stn, Std)
             % Do not send anything, might enter a request/response loop
             true
     end,
-    {next_state, Stn, Std};
-handle_event({input, CmdId, Pdu, _Lapse, _Timestamp}, Stn, Std)
+    {next_state, Stn, Std#st{smsc_inactivity_timer = T}};
+handle_event({input, CmdId, Pdu, _Lapse, _Timestamp}, Stn, Std0)
   when ?IS_RESPONSE(CmdId) ->
+    smpp_session:cancel_timer(Std0#st.smsc_inactivity_timer),
+    T = smpp_session:start_timer(Std0#st.timers, smsc_inactivity_timer),
+    Std = Std0#st{smsc_inactivity_timer = T},
     smpp_session:cancel_timer(Std#st.enquire_link_resp_timer),  % In case it was set
     SeqNum = smpp_operation:get_value(sequence_number, Pdu),
     ReqId = ?REQUEST(CmdId),
@@ -460,6 +468,8 @@ handle_event({input, CmdId, Pdu, _Lapse, _Timestamp}, Stn, Std)
     end;
 handle_event({input, CmdId, Pdu, _Lapse, _Timestamp}, Stn, Std)
   when CmdId == ?COMMAND_ID_ENQUIRE_LINK ->
+    smpp_session:cancel_timer(Std#st.smsc_inactivity_timer),
+    SmscInT = smpp_session:start_timer(Std#st.timers, smsc_inactivity_timer),
     smpp_session:cancel_timer(Std#st.enquire_link_resp_timer),  % In case it was set
     smpp_session:cancel_timer(Std#st.enquire_link_timer),
     ok = (Std#st.mod):handle_enquire_link(Std#st.esme, Pdu),
@@ -467,8 +477,10 @@ handle_event({input, CmdId, Pdu, _Lapse, _Timestamp}, Stn, Std)
     RespId = ?COMMAND_ID_ENQUIRE_LINK_RESP,
     send_response(RespId, ?ESME_ROK, SeqNum, [], Std#st.sock, Std#st.log),
     T = smpp_session:start_timer(Std#st.timers, enquire_link_timer),
-    {next_state, Stn, Std#st{enquire_link_timer = T}};
+    {next_state, Stn, Std#st{enquire_link_timer = T, smsc_inactivity_timer = SmscInT}};
 handle_event({input, CmdId, Pdu, Lapse, Timestamp}, Stn, Std) ->
+    smpp_session:cancel_timer(Std#st.smsc_inactivity_timer),
+    SmscInT = smpp_session:start_timer(Std#st.timers, smsc_inactivity_timer),
     smpp_session:cancel_timer(Std#st.enquire_link_resp_timer),  % In case it was set
     smpp_session:cancel_timer(Std#st.inactivity_timer),
     smpp_session:cancel_timer(Std#st.enquire_link_timer),
@@ -478,11 +490,14 @@ handle_event({input, CmdId, Pdu, Lapse, Timestamp}, Stn, Std) ->
     C = smpp_session:congestion(Std#st.congestion_state, Lapse, Timestamp),
     {next_state, Stn, Std#st{congestion_state = C,
                              enquire_link_timer = TE,
+                             smsc_inactivity_timer = SmscInT,
                              inactivity_timer = TI}};
 handle_event({error, CmdId, Status, _SeqNum}, _Stn, Std)
   when ?IS_RESPONSE(CmdId) ->
     {stop, {command_status, Status}, Std};
 handle_event({error, CmdId, Status, SeqNum}, Stn, Std) ->
+    smpp_session:cancel_timer(Std#st.smsc_inactivity_timer),
+    SmscInT = smpp_session:start_timer(Std#st.timers, smsc_inactivity_timer),
     RespId = case ?VALID_COMMAND_ID(CmdId) of
                  true when CmdId /= ?COMMAND_ID_GENERIC_NACK ->
                      ?RESPONSE(CmdId);
@@ -490,7 +505,7 @@ handle_event({error, CmdId, Status, SeqNum}, Stn, Std) ->
                      ?COMMAND_ID_GENERIC_NACK
              end,
     send_response(RespId, Status, SeqNum,[], Std#st.sock, Std#st.log),
-    {next_state, Stn, Std};
+    {next_state, Stn, Std#st{smsc_inactivity_timer = SmscInT}};
 handle_event(?COMMAND_ID_ENQUIRE_LINK, Stn, Std) ->
     NewStd = send_enquire_link(Std),
     {next_state, Stn, NewStd};
@@ -637,6 +652,8 @@ handle_timeout(enquire_link_failure, _St) ->
     {error, {timeout, enquire_link}};
 handle_timeout(session_init_timer, _St) ->
     {error, {timeout, session_init_timer}};
+handle_timeout(smsc_inactivity_timer, _St) ->
+    {error, {timeout, smsc_inactivity_timer}};
 handle_timeout(inactivity_timer, _St) ->
     {error, {timeout, inactivity_timer}}.
 

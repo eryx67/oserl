@@ -79,6 +79,7 @@
 -define(SESSION_INIT_TIME, 180000).  % 3 minutes
 -define(ENQUIRE_LINK_TIME, 60000).   % 1 minute
 -define(INACTIVITY_TIME, infinity).  % No timeout, never drop the session.
+-define(SMSC_INACTIVITY_TIME, infinity).  % No timeout, never drop the session.
 -define(RESPONSE_TIME, 60000).       % 1 minute
 
 -define(ASSERT_TIME, 120000).        % Two minutes as in TCP SYN_SENT
@@ -88,11 +89,12 @@
 %% Timers record
 -define(DEFAULT_TIMERS_SMPP, #timers_smpp{}).
 
--define(TIMERS(STime, ETime, ITime, RTime),
-        #timers_smpp{session_init_time = STime,
-                     enquire_link_time = ETime,
-                     inactivity_time   = ITime,
-                     response_time     = RTime}).
+-define(TIMERS(STime, ETime, ITime, SmscITime, RTime),
+        #timers_smpp{session_init_time    = STime,
+                     enquire_link_time    = ETime,
+                     inactivity_time      = ITime,
+                     smsc_inactivity_time = SmscITime,
+                     response_time        = RTime}).
 
 %%% RECORDS
 %% {timers_smpp, SessionInitTime, EnquireLinkTime, InactivityTime, ResponseTime}
@@ -129,10 +131,11 @@
 %%   On expiration assume the operation have failed  (default value is
 %%   ?RESPONSE_TIME).
 -record(timers_smpp,
-        {session_init_time = ?SESSION_INIT_TIME,
-         enquire_link_time = ?ENQUIRE_LINK_TIME,
-         inactivity_time   = ?INACTIVITY_TIME,
-         response_time     = ?RESPONSE_TIME}).
+        {session_init_time      = ?SESSION_INIT_TIME,
+         enquire_link_time      = ?ENQUIRE_LINK_TIME,
+         inactivity_time        = ?INACTIVITY_TIME,
+         smsc_inactivity_time   = ?SMSC_INACTIVITY_TIME,
+         response_time          = ?RESPONSE_TIME}).
 
 -ifdef(USE_NOW).
 -define(NOW, erlang:now()).

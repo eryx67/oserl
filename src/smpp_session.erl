@@ -287,6 +287,8 @@ start_timer(#timers_smpp{session_init_time = infinity}, session_init_timer) ->
     undefined;
 start_timer(#timers_smpp{inactivity_time = infinity}, inactivity_timer) ->
     undefined;
+start_timer(#timers_smpp{smsc_inactivity_time = infinity}, smsc_inactivity_timer) ->
+    undefined;
 start_timer(#timers_smpp{response_time = Time}, {response_timer, _} = Msg) ->
     gen_fsm:start_timer(Time, Msg);
 start_timer(#timers_smpp{response_time = Time}, enquire_link_failure) ->
@@ -295,6 +297,8 @@ start_timer(#timers_smpp{enquire_link_time = Time}, enquire_link_timer) ->
     gen_fsm:start_timer(Time, enquire_link_timer);
 start_timer(#timers_smpp{session_init_time = Time}, session_init_timer) ->
     gen_fsm:start_timer(Time, session_init_timer);
+start_timer(#timers_smpp{smsc_inactivity_time = Time}, smsc_inactivity_timer) ->
+    gen_fsm:start_timer(Time, smsc_inactivity_timer);
 start_timer(#timers_smpp{inactivity_time = Time}, inactivity_timer) ->
     gen_fsm:start_timer(Time, inactivity_timer).
 

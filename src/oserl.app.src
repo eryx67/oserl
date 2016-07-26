@@ -1,4 +1,4 @@
 {application, oserl,
  [{description, "Open SMPP Erlang Library"},
-  {vsn, "3.3.0"},
+  {vsn, git},
   {applications, [kernel, stdlib, common_lib]}]}.
