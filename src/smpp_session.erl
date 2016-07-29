@@ -195,7 +195,7 @@ controlling_process(SSLSock, Pid) ->
 
 
 close(Sock) when is_port(Sock) ->
-    gen_tcp:close(Sock);
+    catch(gen_tcp:close(Sock));
 
 
 close(SSLSock) ->
@@ -313,8 +313,8 @@ default_addr() ->
 
 handle_accept(Pid, Sock) when is_port(Sock) ->
     case inet:peername(Sock) of
-        {ok, {Addr, _Port}} ->
-            gen_fsm:sync_send_event(Pid, {accept, Sock, Addr});
+        {ok, {Addr, Port}} ->
+            gen_fsm:sync_send_event(Pid, {accept, Sock, Addr, Port});
         {error, _Reason} ->  % Most probably the socket is closed
             false
     end;
@@ -322,8 +322,8 @@ handle_accept(Pid, Sock) when is_port(Sock) ->
 
 handle_accept(Pid, Sock) ->
     case ssl:peername(Sock) of
-        {ok, {Addr, _Port}} ->
-            gen_fsm:sync_send_event(Pid, {accept, Sock, Addr});
+        {ok, {Addr, Port}} ->
+            gen_fsm:sync_send_event(Pid, {accept, Sock, Addr, Port});
         {error, _Reason} ->  % Most probably the socket is closed
             false
     end.

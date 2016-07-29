@@ -94,7 +94,7 @@
 %%% BEHAVIOUR EXPORTS
 %%%-----------------------------------------------------------------------------
 behaviour_info(callbacks) ->
-    [{handle_accept, 2},
+    [{handle_accept, 3},
      {handle_alert_notification, 2},
      {handle_closed, 2},
      {handle_enquire_link, 2},
@@ -319,8 +319,8 @@ bound_trx(R, St) ->
     {next_state, bound_trx, St}.
 
 
-listen({accept, Sock, Addr}, _From, St) ->
-    case (St#st.mod):handle_accept(St#st.esme, Addr) of
+listen({accept, Sock, Addr, Port}, _From, St) ->
+    case (St#st.mod):handle_accept(St#st.esme, Addr, Port) of
         ok ->
             TI = smpp_session:start_timer(St#st.timers, session_init_timer),
             TE = smpp_session:start_timer(St#st.timers, enquire_link_timer),
