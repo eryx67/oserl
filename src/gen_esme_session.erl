@@ -32,9 +32,6 @@
 %%% INCLUDE FILES
 -include_lib("oserl/include/oserl.hrl").
 
-%%% BEHAVIOUR EXPORTS
--export([behaviour_info/1]).
-
 %%% START/STOP EXPORTS
 -export([start_link/2, stop/1, stop/2]).
 
@@ -93,18 +90,28 @@
 %%%-----------------------------------------------------------------------------
 %%% BEHAVIOUR EXPORTS
 %%%-----------------------------------------------------------------------------
-behaviour_info(callbacks) ->
-    [{handle_accept, 3},
-     {handle_alert_notification, 2},
-     {handle_closed, 2},
-     {handle_enquire_link, 2},
-     {handle_operation, 2},
-     {handle_outbind, 2},
-     {handle_resp, 3},
-     {handle_timeout, 3},
-     {handle_unbind, 2}];
-behaviour_info(_Other) ->
-    undefined.
+
+-type esme() :: pid() | atom().
+-type response_code() :: pos_integer().
+-type pdu_cmd_id() :: pos_integer().
+-type pdu_cmd_status() :: non_neg_integer().
+-type pdu_seq_num() :: pos_integer().
+-type pdu_body() :: proplists:proplist().
+-type pdu() :: {pdu_cmd_id(), pdu_cmd_status(), pdu_seq_num(), Body :: pdu_body()}.
+-type response() ::
+    {error, {command_status, response_code()}} |
+    {error, {cant_pack_pdu, response_code()}} |
+    {ok, pdu()}.
+
+-callback handle_accept(term(), term(), term()) -> term().
+-callback handle_alert_notification(term(), term()) -> term().
+-callback handle_closed(term(), term()) -> term().
+-callback handle_enquire_link(term(), term()) -> term().
+-callback handle_operation(term(), term()) -> term().
+-callback handle_outbind(term(), term()) -> term().
+-callback handle_resp(esme(), response(), reference()) -> any().
+-callback handle_timeout(term(), term(), term()) -> term().
+-callback handle_unbind(term(), term()) -> term().
 
 %%%-----------------------------------------------------------------------------
 %%% START/STOP EXPORTS
@@ -688,7 +695,7 @@ send_request(CmdId, Params, From, St) ->
                   enquire_link_timer = smpp_session:start_timer(St#st.timers, enquire_link_timer),
                   inactivity_timer = smpp_session:start_timer(St#st.timers, inactivity_timer)};
         {error, _CmdId, Status, _SeqNum} ->
-            handle_peer_resp({error, {command_status, Status}}, Ref, St),
+            handle_peer_resp({error, {cant_pack_pdu, Status}}, Ref, St),
             St
     end.
 
