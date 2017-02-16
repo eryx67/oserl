@@ -555,7 +555,7 @@ req_send(Pid, CmdName, Params) ->
             ok;
         _Any:{Reason, _Stack} ->
             Ref = make_ref(),
-            gen_server:cast(self(), {handle_resp, Pid, Reason, Ref}),
+            gen_server:cast(self(), {{handle_resp, Reason, Ref}, Pid}),
             Ref
     end.
 
