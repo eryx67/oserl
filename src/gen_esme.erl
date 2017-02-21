@@ -676,7 +676,7 @@ req_send(Pid, CmdName, Params) ->
                 gen_esme_session:unbind(Pid)
         end
     catch
-        _Any:{Reason, _Stack} -> % Session not alive or request malformed
+        _Any:Reason -> % Session not alive or request malformed
             Ref = make_ref(),
             handle_resp(self(), {error, Reason}, Ref),
             Ref
